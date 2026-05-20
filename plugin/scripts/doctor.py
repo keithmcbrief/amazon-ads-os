@@ -317,10 +317,13 @@ def _wizard_list_profiles_for(region: str, client_id: str, token: str) -> list[d
 def _wizard_auto_slug(profile_payload: dict) -> str:
     info = profile_payload.get("accountInfo", {}) or {}
     name = (info.get("name") or "").strip().lower()
-    cc = (info.get("countryCode") or info.get("marketplaceStringId") or "").strip().lower()
+    cc = c.marketplace_country_code(
+        info.get("marketplaceStringId"),
+        info.get("countryCode"),
+    ).lower()
     pid = str(profile_payload.get("profileId", ""))
     base = re.sub(r"[^a-z0-9_-]+", "-", name).strip("-_") if name else f"acct-{pid}"
-    if cc and len(cc) <= 4:
+    if cc:
         base = f"{base}-{cc}"
     base = base[:64].rstrip("-_") or f"acct-{pid}"
     if not c.SLUG_RE.match(base):
@@ -405,14 +408,23 @@ def run_setup_wizard() -> int:
         return 1
 
     _wizard_print()
-    _wizard_print(f"Found {len(profiles)} ad account(s) in {region}:")
+    _wizard_print(
+        f"Found {len(profiles)} ad account(s) in the {region} region:"
+    )
+    _wizard_print(
+        "  (note: Amazon groups multiple countries into one region — "
+        "e.g. NA covers US/CA/MX/BR)"
+    )
+    _wizard_print()
     for i, p in enumerate(profiles, 1):
         info = p.get("accountInfo", {}) or {}
+        label = c.marketplace_label(
+            info.get("marketplaceStringId"),
+            info.get("countryCode"),
+        )
         _wizard_print(
-            f"  [{i}] {info.get('name', '?')!r}  "
-            f"marketplace={info.get('marketplaceStringId', '?')}  "
-            f"type={info.get('type', '?')}  "
-            f"profile_id={p.get('profileId')}"
+            f"  [{i}] {label}  —  {info.get('name', '?')}  "
+            f"({info.get('type', '?')}, profile_id={p.get('profileId')})"
         )
 
     if len(profiles) == 1:
@@ -470,7 +482,11 @@ def run_setup_wizard() -> int:
     _wizard_print("===== Ready =====")
     _wizard_print()
     _wizard_print(f"  Default ad account:  {info.get('name', '')!r}")
-    _wizard_print(f"  Region / marketplace: {region} / {info.get('marketplaceStringId', '?')}")
+    _wizard_print(
+        f"  Marketplace:          "
+        f"{c.marketplace_label(info.get('marketplaceStringId'), info.get('countryCode'))}"
+    )
+    _wizard_print(f"  Region:               {region}")
     _wizard_print(f"  Short name:           {brand}")
     if len(profiles) > 1:
         _wizard_print(f"  Other accounts unlocked: {len(profiles) - 1}")

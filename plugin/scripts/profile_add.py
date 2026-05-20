@@ -147,11 +147,12 @@ def _pick_ads_profile(profiles: list[dict]) -> dict:
     print("Profiles available for this identity:")
     for i, p in enumerate(profiles, 1):
         info = p.get("accountInfo", {}) or {}
+        label = c.marketplace_label(
+            info.get("marketplaceStringId"), info.get("countryCode"),
+        )
         print(
-            f"  [{i}] profileId={p.get('profileId')}  "
-            f"name={info.get('name', '?')!r}  "
-            f"marketplaceStringId={info.get('marketplaceStringId', '?')}  "
-            f"type={info.get('type', '?')}"
+            f"  [{i}] {label}  —  {info.get('name', '?')}  "
+            f"({info.get('type', '?')}, profile_id={p.get('profileId')})"
         )
     if len(profiles) == 1:
         print("\nOnly one profile — selecting it.")
@@ -212,7 +213,7 @@ def _register_profile(brand: str, identity: c.Identity, access_token: str,
     print(f"  identity:    {identity.name}")
     print(f"  account:     {info.get('name', '')!r}")
     print(f"  profile_id:  {chosen.get('profileId', '')}")
-    print(f"  marketplace: {info.get('marketplaceStringId', '')}")
+    print(f"  marketplace: {c.marketplace_label(info.get('marketplaceStringId'), info.get('countryCode'))}")
     print(f"  region:      {identity.region}")
     print(f"  timezone:    {chosen.get('timezone', 'UTC')}")
     print(f"  mode:        {'SANDBOX' if identity.is_sandbox else 'LIVE'}")

@@ -64,12 +64,13 @@ def _list_v2_profiles(identity: c.Identity, access_token: str) -> list[dict]:
 
 def _suggest_slug(info: dict, profile_id: str | int) -> str:
     name = (info.get("name") or "").strip().lower()
-    marketplace = (info.get("countryCode") or info.get("marketplaceStringId") or "").strip().lower()
+    cc = c.marketplace_country_code(
+        info.get("marketplaceStringId"), info.get("countryCode"),
+    ).lower()
     base = name or f"profile-{profile_id}"
-    # Normalize to slug rules
     base = re.sub(r"[^a-z0-9_-]+", "-", base).strip("-_")
-    if marketplace and len(marketplace) <= 4:
-        base = f"{base}-{marketplace}"
+    if cc:
+        base = f"{base}-{cc}"
     base = base[:64].rstrip("-_") or f"profile-{profile_id}"
     if not c.SLUG_RE.match(base):
         base = f"profile-{profile_id}"
@@ -89,11 +90,10 @@ def _register(identity: c.Identity, p: dict, *, brand: str) -> None:
     apf = c.active_profile_file()
     if not apf.exists():
         c.atomic_write_text(apf, brand + "\n")
+    label = c.marketplace_label(info.get("marketplaceStringId"), info.get("countryCode"))
     print(
         f"  registered → {brand}  "
-        f"(profile_id={p.get('profileId')}, "
-        f"marketplace={info.get('marketplaceStringId')}, "
-        f"account={info.get('name')!r})"
+        f"({label}, profile_id={p.get('profileId')}, account={info.get('name')!r})"
     )
 
 
@@ -129,10 +129,10 @@ def main(argv: list[str] | None = None) -> int:
         already = existing_by_pid.get(pid)
         suggested = _suggest_slug(info, pid)
         suffix = f"  [already registered as {already!r}]" if already else f"  [suggested slug: {suggested!r}]"
+        label = c.marketplace_label(info.get("marketplaceStringId"), info.get("countryCode"))
         print(
-            f"  [{i}] profileId={pid}  "
-            f"name={info.get('name', '?')!r}  "
-            f"marketplace={info.get('marketplaceStringId', '?')}{suffix}"
+            f"  [{i}] {label}  —  {info.get('name', '?')}  "
+            f"(profile_id={pid}){suffix}"
         )
 
     if not args.register:

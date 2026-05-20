@@ -92,6 +92,58 @@ def host_for(region: str) -> str:
     return REGION_HOSTS[region]
 
 
+# Amazon marketplace IDs → (country_code, country_name, region).
+# Used to show "United States (US)" in the wizard instead of cryptic IDs.
+MARKETPLACES: dict[str, tuple[str, str, str]] = {
+    # North America
+    "ATVPDKIKX0DER":  ("US", "United States",  "NA"),
+    "A2EUQ1WTGCTBG2": ("CA", "Canada",         "NA"),
+    "A1AM78C64UM0Y8": ("MX", "Mexico",         "NA"),
+    "A2Q3Y263D00KWC": ("BR", "Brazil",         "NA"),
+    # Europe / MENA / India
+    "A1F83G8C2ARO7P": ("UK", "United Kingdom", "EU"),
+    "A1PA6795UKMFR9": ("DE", "Germany",        "EU"),
+    "A13V1IB3VIYZZH": ("FR", "France",         "EU"),
+    "APJ6JRA9NG5V4":  ("IT", "Italy",          "EU"),
+    "A1RKKUPIHCS9HS": ("ES", "Spain",          "EU"),
+    "A1805IZSGTT6HS": ("NL", "Netherlands",    "EU"),
+    "A2NODRKZP88ZB9": ("SE", "Sweden",         "EU"),
+    "A1C3SOZRARQ6R3": ("PL", "Poland",         "EU"),
+    "A1ZFFQZ3HTUKT9": ("BE", "Belgium",        "EU"),
+    "AMEN7PMS3EDWL":  ("IE", "Ireland",        "EU"),
+    "A2VIGQ35RCS4UG": ("AE", "United Arab Emirates", "EU"),
+    "A21TJRUUN4KGV":  ("IN", "India",          "EU"),
+    "A17E79C6D8DWNP": ("SA", "Saudi Arabia",   "EU"),
+    "A33AVAJ2PDY3EV": ("TR", "Turkey",         "EU"),
+    "ARBP9OOSHTCHU":  ("EG", "Egypt",          "EU"),
+    # Far East
+    "A1VC38T7YXB528": ("JP", "Japan",          "FE"),
+    "A39IBJ37TRP1C6": ("AU", "Australia",      "FE"),
+    "A19VAU5U5O7RUS": ("SG", "Singapore",      "FE"),
+}
+
+
+def marketplace_label(marketplace_id: str | None, country_code: str | None = None) -> str:
+    """Human-readable label like 'United States (US)' for an Amazon marketplace.
+    Prefers the API-provided countryCode if present; falls back to the
+    marketplace-ID mapping; falls back to the raw ID if nothing matches."""
+    if marketplace_id and marketplace_id in MARKETPLACES:
+        cc, name, _ = MARKETPLACES[marketplace_id]
+        return f"{name} ({cc})"
+    if country_code:
+        return country_code.strip().upper()
+    return marketplace_id or "?"
+
+
+def marketplace_country_code(marketplace_id: str | None, country_code: str | None = None) -> str:
+    """Return the 2-letter country code, falling back to the marketplace map."""
+    if country_code:
+        return country_code.strip().upper()
+    if marketplace_id and marketplace_id in MARKETPLACES:
+        return MARKETPLACES[marketplace_id][0]
+    return ""
+
+
 # ---- REPORT_SPECS -------------------------------------------------------
 # Typed report definitions for v1. Columns are the standard "all metrics"
 # subset for each report type. Update REPORT_SPECS_VERSION when any spec
