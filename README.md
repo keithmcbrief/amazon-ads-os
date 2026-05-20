@@ -48,7 +48,7 @@ Solo sellers don't need to think about identities — `/amazon-setup-profile` au
 In Claude Code:
 
 ```
-/plugin marketplace add github.com/keithmcbrief/amazon-ads-os
+/plugin marketplace add https://github.com/keithmcbrief/amazon-ads-os
 /plugin install amazon-ads-os@amazon-ads-os
 ```
 
@@ -174,7 +174,7 @@ brand for the one report without changing your active profile.
 ## Distribution
 
 This repo IS its own Claude Code marketplace. Anyone who runs
-`/plugin marketplace add github.com/keithmcbrief/amazon-ads-os` + `/plugin install`
+`/plugin marketplace add https://github.com/keithmcbrief/amazon-ads-os` + `/plugin install`
 gets the latest version. Updates: push to `main`.
 
 ## Roadmap (post-v1)
