@@ -1,0 +1,17 @@
+{
+  "name": "amazon-ads-os",
+  "owner": {
+    "name": "Keith McBrief",
+    "url": "https://github.com/keithmcbrief"
+  },
+  "plugins": [
+    {
+      "name": "amazon-ads-os",
+      "source": ".",
+      "description": "Operating system for Amazon Ads agencies. Pull reports, find wasteful search terms, add negatives — all in plain English from Claude Code.",
+      "version": "0.1.0",
+      "category": "marketing",
+      "keywords": ["amazon", "amazon-ads", "ppc", "ecommerce", "agency"]
+    }
+  ]
+}

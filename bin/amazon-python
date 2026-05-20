@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Wrapper that runs amazon-ads-os Python scripts inside the plugin's
+# private venv. If the venv doesn't exist yet, bootstrap it first.
+#
+# Skills always invoke scripts through this wrapper:
+#     ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python scripts/foo.py ...
+#
+# Locally (dev workflow), you can also call it directly — it falls back
+# to a sibling .venv at the repo root if CLAUDE_PLUGIN_DATA isn't set.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Honor Claude Code's plugin-data dir when running as an installed plugin.
+# Fall back to the repo's own .venv for local dev / tests.
+if [ -n "${CLAUDE_PLUGIN_DATA:-}" ]; then
+  PLUGIN_DATA="$CLAUDE_PLUGIN_DATA"
+else
+  PLUGIN_DATA="$PLUGIN_ROOT"
+fi
+
+VENV_PY="$PLUGIN_DATA/.venv/bin/python3"
+
+if [ ! -x "$VENV_PY" ]; then
+  # Bootstrap with system python3
+  if ! command -v python3 >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+[amazon-ads-os] python3 not found.
+Install Python 3.10+ from python.org or Homebrew, then restart Claude Code.
+EOF
+    exit 1
+  fi
+  python3 "$PLUGIN_ROOT/scripts/bootstrap.py" "$PLUGIN_ROOT" "$PLUGIN_DATA" >&2 || exit 1
+fi
+
+if [ ! -x "$VENV_PY" ]; then
+  echo "[amazon-ads-os] bootstrap finished but venv python is missing at $VENV_PY" >&2
+  exit 1
+fi
+
+exec "$VENV_PY" "$@"

@@ -1,0 +1,13 @@
+{
+  "name": "amazon-ads-os",
+  "version": "0.1.0",
+  "description": "Operating system for Amazon Ads agencies. Pull reports, find wasteful search terms, add negatives — all in plain English from Claude Code.",
+  "author": {
+    "name": "Keith McBrief",
+    "url": "https://github.com/keithmcbrief"
+  },
+  "homepage": "https://github.com/keithmcbrief/amazon-ads-os",
+  "repository": "https://github.com/keithmcbrief/amazon-ads-os",
+  "license": "MIT",
+  "keywords": ["amazon", "amazon-ads", "ppc", "ecommerce", "agency"]
+}
