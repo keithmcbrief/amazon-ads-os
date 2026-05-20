@@ -1,104 +1,66 @@
 ---
 name: amazon-setup-profile
-description: Onboard a new Amazon Ads brand profile. Use when the user says "set up amazon ads", "add a new brand", "configure amazon credentials", "first time setup", "onboard a new amazon account", "register a brand", or when there are no profiles configured yet.
+description: Add another Amazon Ads brand or ad account to amazon-ads-os. Use when the user already has a connection set up and wants to add a second brand, register more ad accounts under an existing connection, or onboard a new agency client. For first-time setup, use /amazon-doctor instead.
 ---
 
 # amazon-setup-profile
 
-You are helping the user add a new Amazon Ads brand to amazon-ads-os.
+> **First-time users should run `/amazon-doctor` instead.** That command has a guided wizard for the very first connection. This skill is for adding *additional* ad accounts after the first one is set up.
 
-## The two-tier model (read this once)
+## When to use this skill
 
-amazon-ads-os splits credentials into two layers:
+Use this when the user already has at least one ad account configured and wants to add more. Three common situations:
 
-- **Identity** — a single LWA app + refresh_token + region. One OAuth grant. The agency has one identity if they use Amazon Ads Manager Accounts, or one per directly-authorized brand.
-- **Profile** — a specific Amazon advertiser × marketplace, pointing at an identity. Multiple profiles can share one identity (the Manager Account case).
+1. **Add a brand under an existing connection.** Common for Amazon Ads Manager Accounts — one OAuth grant gives access to multiple advertisers. No new credentials needed.
+2. **Onboard a new agency client with their own credentials.** That client gave the agency a fresh refresh_token for their Amazon account. Need a new connection.
+3. **Register every visible ad account at once.** Manager Account batch flow.
 
-So the question on every onboarding is: *do you want to reuse an existing identity, or create a new one for this brand?*
+If the user hasn't set up any connection yet, redirect them: "Run `/amazon-doctor` to do first-time setup — it walks you through it."
 
-## Prerequisites the user must have
-
-For a **new identity**, they need:
-- Amazon Ads API access (one-time application, ~1 day approval)
-- LWA `client_id` + `client_secret` from https://developer.amazon.com/loginwithamazon/console/site/lwa/overview.html
-- LWA `refresh_token` from completing the OAuth dance against their LWA app
-- Region (NA / EU / FE)
-
-For **adding a brand under an existing identity** (Manager Account flow): nothing more — the existing identity has access already.
-
-If they don't have any LWA credentials at all, point them at:
-https://advertising.amazon.com/API/docs/en-us/setting-up/overview
-
-## Flow
-
-### Step 1: Check what already exists
+## Step 1: See what already exists
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/profile_list.py --json
 ```
 
-Look at `identities` — empty means cold start, populated means there are existing identities to potentially reuse.
+`identities` empty → user is doing first-time setup, redirect to `/amazon-doctor`.
 
-### Step 2: Decide identity strategy
+`identities` populated → ask the user which case they're in:
+- A) "Add a brand using the existing `<name>` connection" → step 2A
+- B) "This brand has separate credentials" → step 2B
+- C) "Show all ad accounts and register multiple at once" → step 2C
 
-- **Cold start (no identities)**: must create a new identity. Ask the user for an identity name (default: same as brand slug — `acme-us`).
-- **Existing identities + user has Manager Account access to many brands**: reuse the existing identity. You won't need any new credentials. Run `profile_discover.py` to enumerate visible brands.
-- **Existing identities + the new brand granted a separate OAuth**: create a new identity (separate OAuth grant).
-
-If unsure, **ask the user** which case applies.
-
-### Step 3a: Cold-start or new-identity flow
-
-Ask for the brand slug. Then run:
+## Step 2A: Add under an existing connection
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/profile_add.py \
-  --brand <slug> --new-identity <identity-name> [--sandbox]
+  --brand <slug> --identity <existing-connection-name>
 ```
 
-The script will:
-- prompt for region (or force `SANDBOX` if `--sandbox`)
-- prompt via **hidden stdin** for client_id, client_secret, refresh_token (never via flags)
-- mint a fresh LWA access token to verify the credentials
-- call `GET /v2/profiles` and list every advertiser visible to this identity
-- if multiple advertisers appear, ask the user to pick one
-- write `~/.amazon-ads-os/identities/<name>/.env` (0600) AND `~/.amazon-ads-os/profiles/<brand>/profile.env`
-- set `active_profile` if none was set
+The script reuses the saved refresh_token, calls `/v2/profiles`, asks the user to pick one. No new credential prompts.
 
-### Step 3b: Reuse-existing-identity flow
-
-Ask for the brand slug. Then run:
+## Step 2B: New credentials → new connection
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/profile_add.py \
-  --brand <slug> --identity <identity-name>
+  --brand <slug> --new-identity <connection-name>
 ```
 
-No credential prompts — the script uses the saved identity's refresh_token to call `/v2/profiles` and asks the user to pick.
+Prompts for client_id, client_secret, refresh_token via hidden stdin. Same flow as the wizard, just scoped to adding a specific brand.
 
-### Step 3c: Manager Account batch flow (multiple brands at once)
-
-For an agency that wants to register every brand under a Manager Account in one go:
+## Step 2C: Batch-register every visible ad account
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/profile_discover.py \
-  --identity <identity-name> --register --all
+  --identity <connection-name> --register --all
 ```
 
-Generates slug suggestions from each Amazon account's name + marketplace and writes a profile config for each. The user can rename slugs afterwards with file renames.
+Calls `/v2/profiles` once, generates a friendly slug for each account, and writes a profile config for each. User can rename slugs later by renaming the folders under `~/.amazon-ads-os/profiles/`.
 
 ## Never pass secrets via CLI flags
 
-The script prompts via hidden stdin. Don't construct command lines with embedded `client_secret` or `refresh_token` — shell history and `ps` will leak them.
+Scripts prompt via hidden stdin. Don't construct command lines with embedded `client_secret` or `refresh_token` — shell history and `ps` will leak them.
 
 ## After success
 
-Confirm the printed summary (account, profile_id, marketplace, region, identity, mode) and recommend `/amazon-doctor` to verify the network checks.
-
-## Common errors
-
-- `invalid_grant` — refresh_token revoked. Need a fresh one.
-- `invalid_client` — wrong client_id or client_secret pair.
-- `unauthorized_client` — LWA app missing `advertising::campaign_management` scope.
-- `identity X already exists` — pass `--identity X` (reuse) or pick a different name with `--new-identity Y`.
-- `no profiles returned for identity ...` — the refresh token belongs to a different region than the identity claims, or the account isn't approved for Amazon Ads API yet.
+Confirm the printed summary (brand, account name, profile_id, marketplace, region, connection name). Recommend a verification step: `pull campaigns for the last 7 days` to verify the new brand works end-to-end.

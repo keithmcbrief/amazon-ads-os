@@ -1,58 +1,62 @@
 ---
 name: amazon-doctor
-description: Preflight health check for amazon-ads-os. Use when the user says "amazon doctor", "preflight", "is amazon ads working", "diagnose", "amazon-ads-os not working", or when any other amazon-ads-os skill fails with a setup-related error.
+description: First-run setup wizard and preflight diagnostics for amazon-ads-os. Use when the user says "amazon doctor", "set up amazon ads", "connect amazon", "first time setup", "preflight", "is amazon ads working", "diagnose", "amazon-ads-os not working", or when any other amazon-ads-os skill fails with a setup-related error.
 ---
 
 # amazon-doctor
 
-You are running preflight diagnostics on the user's amazon-ads-os setup.
+This is the **first command** a user runs after installing the plugin. It does two things:
 
-## Default: PASS/FAIL checklist
+1. **If no Amazon Ads connection is configured yet** → launches an interactive setup wizard that walks the user through credentials and ad-account selection.
+2. **If already set up** → runs preflight diagnostics (PASS/FAIL checklist).
+
+Run it with `--interactive` so it auto-triggers the wizard for first-time users:
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py --interactive
+```
+
+The script handles everything. **Do not pre-empt it by asking the user for credentials or branching on identity-vs-profile logic** — the wizard is deterministic and asks the right things in the right order.
+
+## What the wizard does (so you know what's happening)
+
+1. Confirms the user wants to connect.
+2. Prompts (with hidden input) for `client_id`, `client_secret`, `refresh_token`, and region.
+3. Verifies credentials by minting an LWA access token. On `invalid_grant` / `invalid_client` / `unauthorized_client`, prints exact fix.
+4. Calls `/v2/profiles` in the chosen region; auto-probes NA/EU/FE if empty.
+5. If exactly one ad account is visible, auto-selects it. Otherwise prompts the user to pick the default.
+6. Suggests a short name (slug) generated from the account name + marketplace; user can accept or override.
+7. Writes the connection + ad-account config locally and runs diagnostics.
+
+After the wizard succeeds, recommend the user try `pull search terms for the last 30 days` to verify end-to-end.
+
+## Diagnostics-only mode
+
+If the user just wants a health check (already set up):
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py
 ```
 
-Checks:
-1. Python ≥ 3.10
-2. `requests` library importable
-3. Data directory (`~/.amazon-ads-os/`) writable
-4. At least one identity configured
-5. At least one profile configured
-6. Active profile loads without errors (identity exists, valid region)
-7. LWA token refresh succeeds for **every** identity
-8. `GET /v2/profiles` returns the configured `profile_id` for the active profile
+Checks: Python ≥ 3.10, `requests` importable (in plugin venv), data dir writable, identities/profiles configured, active profile loads, LWA refresh works per identity, `GET /v2/profiles` returns the configured `profile_id`.
 
-If checks 6 or 7 should be skipped (offline / quick check), pass `--no-network`.
+Add `--no-network` to skip the Amazon-hitting checks.
 
-A non-zero exit means one or more checks failed. Surface the specific FAIL lines to the user — each one has a hint.
+## Common errors
 
-## Common fixes
-
-| FAIL | Fix |
+| Error | Fix |
 |---|---|
-| `python 3.X.Y (need 3.10+)` | Install a newer Python |
-| `requests not importable` | `python3 -m pip install --user -r requirements.txt` (the plugin's `requirements.txt`) |
-| `data dir not writable` | check `~/.amazon-ads-os` permissions |
-| `no identities configured` | run `/amazon-setup-profile` |
-| `no profiles configured` | run `/amazon-setup-profile` (or `profile_discover.py --register --all` to batch-register under an existing identity) |
-| `LWA refresh failed for <identity>: invalid_grant` | refresh_token for that identity was revoked; delete `~/.amazon-ads-os/identities/<name>/` and rerun setup |
+| `LWA refresh failed for <identity>: invalid_grant` | refresh_token revoked; delete `~/.amazon-ads-os/identities/<name>/` and re-run `/amazon-doctor` |
 | `LWA refresh failed for <identity>: invalid_client` | wrong client_id/secret in the identity's `.env` |
-| `configured profile_id not in /v2/profiles` | the active profile's identity returns a different set of profile IDs than expected; the brand may have revoked access, or the identity may be in the wrong region |
-| `profile X references identity Y which failed to load` | edit `profiles/X/profile.env` to point at a valid identity name, or recreate the identity |
+| `configured profile_id not in /v2/profiles` | brand may have revoked access, or the identity is in the wrong region |
+| `requests not importable` | plugin venv didn't bootstrap; restart Claude Code so the SessionStart hook runs |
 
 ## Support bundle
 
-If the user is reporting a bug they want help with:
+If the user reports a bug:
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py --support-bundle /tmp/amazon-ads-os-support.zip
 ```
 
-This writes a **redacted** zip with: logs (signed URLs and auth headers stripped), profile metadata (secrets removed), and pending state files. The user can attach this to a GitHub issue.
-
-The bundle is verified by tests to never contain `client_secret`, `refresh_token`, `client_id`, or cached access tokens — but if the user wants to double-check, suggest:
-```bash
-python3 -m zipfile -e /tmp/amazon-ads-os-support.zip /tmp/check && grep -ri 'amzn1\|Atza\|Atzr' /tmp/check
-```
-(Should print nothing.)
+Writes a **redacted** zip — logs with signed URLs stripped, identity/profile metadata with secrets removed, pending state files. The user can attach it to a GitHub issue.

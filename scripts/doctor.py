@@ -228,12 +228,269 @@ def make_support_bundle(out_path: Path) -> Path:
     return out_path
 
 
+# ---- First-run wizard --------------------------------------------------
+# Speaks user-friendly language ("Connection" / "Ad account") rather than
+# the internal "Identity" / "Profile" terms. The wizard is the first thing
+# `amazon-doctor --interactive` does when no credentials exist. Subsequent
+# runs go straight to diagnostics.
+import getpass
+
+try:
+    import requests as _rq
+except ImportError:
+    _rq = None
+
+
+def _wizard_print(msg: str = "") -> None:
+    """Wrapper so we can route output cleanly (stdout for the wizard text,
+    stderr is reserved for noise from sub-calls)."""
+    print(msg)
+
+
+def _wizard_input(prompt: str, default: str | None = None) -> str:
+    suffix = f" [{default}]" if default is not None else ""
+    val = input(f"{prompt}{suffix}: ").strip()
+    return val if val else (default or "")
+
+
+def _wizard_confirm(prompt: str, *, default: bool = True) -> bool:
+    yn = "[Y/n]" if default else "[y/N]"
+    while True:
+        val = input(f"{prompt} {yn}: ").strip().lower()
+        if not val:
+            return default
+        if val in ("y", "yes"):
+            return True
+        if val in ("n", "no"):
+            return False
+
+
+def _wizard_secret(prompt: str) -> str:
+    val = getpass.getpass(f"{prompt}: ").strip()
+    if not val:
+        raise SystemExit("aborted: empty value")
+    return val
+
+
+def _wizard_mint_token(client_id: str, client_secret: str, refresh_token: str) -> str:
+    if _rq is None:
+        raise SystemExit("requests library not available — restart Claude Code so the venv bootstraps")
+    resp = _rq.post(
+        c.LWA_TOKEN_URL,
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        },
+        timeout=30,
+    )
+    body = {}
+    try:
+        body = resp.json()
+    except Exception:
+        pass
+    if resp.status_code != 200 or "access_token" not in body:
+        raise c.parse_lwa_error(body or {"error": "unknown_error",
+                                          "error_description": resp.text})
+    return body["access_token"]
+
+
+def _wizard_list_profiles_for(region: str, client_id: str, token: str) -> list[dict]:
+    if _rq is None:
+        raise SystemExit("requests not available")
+    host = c.host_for(region)
+    resp = _rq.get(
+        host + "/v2/profiles",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Amazon-Advertising-API-ClientId": client_id,
+            "Accept": "application/json",
+        },
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        return []
+    return resp.json() or []
+
+
+def _wizard_auto_slug(profile_payload: dict) -> str:
+    info = profile_payload.get("accountInfo", {}) or {}
+    name = (info.get("name") or "").strip().lower()
+    cc = (info.get("countryCode") or info.get("marketplaceStringId") or "").strip().lower()
+    pid = str(profile_payload.get("profileId", ""))
+    base = re.sub(r"[^a-z0-9_-]+", "-", name).strip("-_") if name else f"acct-{pid}"
+    if cc and len(cc) <= 4:
+        base = f"{base}-{cc}"
+    base = base[:64].rstrip("-_") or f"acct-{pid}"
+    if not c.SLUG_RE.match(base):
+        base = f"acct-{pid}"
+    return base
+
+
+def _wizard_already_setup() -> bool:
+    return bool(c.list_identity_names()) and bool(c.list_profile_slugs())
+
+
+def run_setup_wizard() -> int:
+    """Linear interactive setup. Returns 0 on success, non-zero on user abort
+    or hard failure. The caller should typically follow up by running diagnostics.
+    """
+    _wizard_print()
+    _wizard_print("===== Amazon Ads OS — first-time setup =====")
+    _wizard_print()
+    _wizard_print("This will:")
+    _wizard_print("  • take your Amazon Ads API credentials (client_id, client_secret, refresh_token)")
+    _wizard_print("  • find which ad accounts they unlock")
+    _wizard_print("  • save them locally on this machine so future skills can use them")
+    _wizard_print()
+    _wizard_print("Nothing on Amazon will be changed by this step.")
+    _wizard_print()
+
+    if not _wizard_confirm("Ready to connect?"):
+        _wizard_print("Aborted. You can rerun /amazon-doctor any time.")
+        return 1
+
+    _wizard_print()
+    _wizard_print("Don't have credentials yet? See:")
+    _wizard_print("  https://advertising.amazon.com/API/docs/en-us/setting-up/overview")
+    _wizard_print()
+    _wizard_print("You'll need:")
+    _wizard_print("  1. an LWA (Login with Amazon) app — client_id + client_secret")
+    _wizard_print("  2. a refresh_token from completing the OAuth dance against that app")
+    _wizard_print("  3. a region: NA (.com/.ca/.mx/.br) | EU (.co.uk/.de/...) | FE (.jp/.au/.sg)")
+    _wizard_print()
+    _wizard_print("Secrets are entered with hidden input. Nothing is logged.")
+    _wizard_print()
+
+    client_id = _wizard_secret("LWA client_id")
+    client_secret = _wizard_secret("LWA client_secret")
+    refresh_token = _wizard_secret("LWA refresh_token")
+    region = (_wizard_input("Region", default="NA") or "NA").upper()
+    if region not in c.REGION_HOSTS and region != c.SANDBOX_REGION:
+        _wizard_print(f"  unknown region {region!r}; expected NA/EU/FE — aborting")
+        return 1
+
+    _wizard_print()
+    _wizard_print("Verifying credentials with Amazon…")
+    try:
+        token = _wizard_mint_token(client_id, client_secret, refresh_token)
+    except c.AuthError as e:
+        _wizard_print()
+        _wizard_print(f"  ✗ {e}")
+        _wizard_print()
+        _wizard_print("Common fixes:")
+        _wizard_print("  invalid_grant     → refresh_token is wrong or expired; regenerate it")
+        _wizard_print("  invalid_client    → client_id or client_secret is wrong")
+        _wizard_print("  unauthorized_client → your LWA app is missing the Amazon Ads scope")
+        return 1
+    _wizard_print("  ✓ credentials accepted")
+
+    _wizard_print()
+    _wizard_print(f"Looking up ad accounts in {region}…")
+    profiles = _wizard_list_profiles_for(region, client_id, token)
+    if not profiles:
+        _wizard_print(f"  no ad accounts found in {region}. Probing other regions…")
+        for r in (x for x in ("NA", "EU", "FE") if x != region):
+            alt = _wizard_list_profiles_for(r, client_id, token)
+            if alt:
+                _wizard_print(f"  ✓ found {len(alt)} account(s) in {r}; switching region")
+                region = r
+                profiles = alt
+                break
+    if not profiles:
+        _wizard_print()
+        _wizard_print("  ✗ no Amazon Ads ad accounts visible to these credentials.")
+        _wizard_print("    Verify this Amazon account has Ads API access approved.")
+        return 1
+
+    _wizard_print()
+    _wizard_print(f"Found {len(profiles)} ad account(s) in {region}:")
+    for i, p in enumerate(profiles, 1):
+        info = p.get("accountInfo", {}) or {}
+        _wizard_print(
+            f"  [{i}] {info.get('name', '?')!r}  "
+            f"marketplace={info.get('marketplaceStringId', '?')}  "
+            f"type={info.get('type', '?')}  "
+            f"profile_id={p.get('profileId')}"
+        )
+
+    if len(profiles) == 1:
+        chosen = profiles[0]
+        _wizard_print()
+        _wizard_print(f"Only one account — using it as your default.")
+    else:
+        _wizard_print()
+        while True:
+            sel = _wizard_input(f"Pick your default ad account [1-{len(profiles)}]", default="1")
+            if sel.isdigit() and 1 <= int(sel) <= len(profiles):
+                chosen = profiles[int(sel) - 1]
+                break
+            _wizard_print(f"  please enter a number between 1 and {len(profiles)}")
+
+    suggested_slug = _wizard_auto_slug(chosen)
+    _wizard_print()
+    brand = _wizard_input("Short name for this ad account (used in commands)", default=suggested_slug)
+    try:
+        brand = c.validate_slug(brand)
+    except ValueError as e:
+        _wizard_print(f"  invalid name: {e} — using {suggested_slug!r}")
+        brand = suggested_slug
+
+    identity_name = "default"
+    # If "default" identity already exists (unusual on cold start), bump the name
+    if c.identity_env_path(identity_name).exists():
+        idx = 2
+        while c.identity_env_path(f"default-{idx}").exists():
+            idx += 1
+        identity_name = f"default-{idx}"
+
+    _wizard_print()
+    _wizard_print("Saving connection…")
+    c.write_env_file(c.identity_env_path(identity_name), {
+        "LWA_CLIENT_ID": client_id,
+        "LWA_CLIENT_SECRET": client_secret,
+        "LWA_REFRESH_TOKEN": refresh_token,
+        "ADS_REGION": region,
+    })
+
+    info = chosen.get("accountInfo", {}) or {}
+    c.write_env_file(c.profile_config_path(brand), {
+        "IDENTITY": identity_name,
+        "ADS_PROFILE_ID": str(chosen.get("profileId", "")),
+        "ADS_MARKETPLACE_ID": str(info.get("marketplaceStringId", "")),
+        "ADS_ACCOUNT_NAME": str(info.get("name", "")),
+        "ADS_TIMEZONE": str(chosen.get("timezone", "UTC")),
+    })
+
+    if not c.active_profile_file().exists():
+        c.atomic_write_text(c.active_profile_file(), brand + "\n")
+
+    _wizard_print()
+    _wizard_print("===== Ready =====")
+    _wizard_print()
+    _wizard_print(f"  Default ad account:  {info.get('name', '')!r}")
+    _wizard_print(f"  Region / marketplace: {region} / {info.get('marketplaceStringId', '?')}")
+    _wizard_print(f"  Short name:           {brand}")
+    if len(profiles) > 1:
+        _wizard_print(f"  Other accounts unlocked: {len(profiles) - 1}")
+        _wizard_print(f"    (add later with /amazon-setup-profile or /amazon-switch-profile)")
+    _wizard_print()
+    _wizard_print("Next: try \"pull search terms for the last 30 days\"")
+    _wizard_print()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="amazon-ads-os preflight diagnostics")
+    ap = argparse.ArgumentParser(description="amazon-ads-os preflight diagnostics + first-run wizard")
     ap.add_argument("--no-network", action="store_true",
                     help="skip checks that hit Amazon (token refresh + /v2/profiles)")
     ap.add_argument("--support-bundle", metavar="PATH",
                     help="build a redacted support bundle zip and exit")
+    ap.add_argument("--interactive", action="store_true",
+                    help="auto-launch the first-run wizard if no connection is configured yet")
+    ap.add_argument("--wizard-only", action="store_true",
+                    help="run the interactive wizard unconditionally (skip diagnostics)")
     args = ap.parse_args(argv)
 
     if args.support_bundle:
@@ -242,6 +499,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote support bundle → {out}")
         print("verify it has no secrets with: python3 -m zipfile -e <bundle> /tmp/check && grep -ri 'amzn1\\|atzr|' /tmp/check")
         return 0
+
+    if args.wizard_only:
+        return run_setup_wizard()
+
+    if args.interactive and not _wizard_already_setup():
+        rc = run_setup_wizard()
+        if rc != 0:
+            return rc
+        # Fall through to diagnostics after a successful setup
 
     return _run_checks(skip_network=args.no_network)
 
