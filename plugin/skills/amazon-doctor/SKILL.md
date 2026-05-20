@@ -10,13 +10,29 @@ This is the **first command** a user runs after installing the plugin. It does t
 1. **If no Amazon Ads connection is configured yet** → launches an interactive setup wizard that walks the user through credentials and ad-account selection.
 2. **If already set up** → runs preflight diagnostics (PASS/FAIL checklist).
 
-Run it with `--interactive` so it auto-triggers the wizard for first-time users:
+Run it with `--interactive`:
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/amazon-python ${CLAUDE_PLUGIN_ROOT}/scripts/doctor.py --interactive
 ```
 
-The script handles everything. **Do not pre-empt it by asking the user for credentials or branching on identity-vs-profile logic** — the wizard is deterministic and asks the right things in the right order.
+## How the output flow works
+
+The script auto-detects whether it has a TTY (a real terminal) or is being invoked from your Bash tool:
+
+- **TTY available**: launches the interactive wizard, prompts for credentials with hidden input, completes setup end-to-end.
+- **No TTY (your Bash tool)**: prints a short `setup needed` message that includes a one-line `!~/.amazon-ads-os/bin/wizard` command, then exits 0 (not an error — it just needs the user to take the next step in their own terminal).
+
+**When you see the `setup needed` output, do this:**
+
+1. Relay the `!~/.amazon-ads-os/bin/wizard` line to the user *verbatim*. That's a Claude Code shell escape — the leading `!` runs the wizard in their real terminal so they can enter credentials with hidden input.
+2. Do NOT try to re-run the wizard via Bash — it'll fail the same way.
+3. Do NOT ask the user for their credentials in chat — they'd leak into the conversation transcript.
+4. Do NOT construct a longer/different command — `~/.amazon-ads-os/bin/wizard` is written by the bootstrap hook and always points at the current install.
+
+After the user runs the wizard and confirms it succeeded, re-run doctor *without* `--interactive` to surface the diagnostic checks.
+
+**Why the wizard can't run from your Bash tool:** the secrets (`client_secret`, `refresh_token`) are entered via `getpass`, which requires a TTY for hidden input. This is also intentional security: their refresh_token never enters the Claude conversation or transcript.
 
 ## What the wizard does (so you know what's happening)
 

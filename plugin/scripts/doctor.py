@@ -501,15 +501,52 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.wizard_only:
+        if not sys.stdin.isatty():
+            _print_wizard_handoff()
+            return 0
         return run_setup_wizard()
 
     if args.interactive and not _wizard_already_setup():
-        rc = run_setup_wizard()
-        if rc != 0:
-            return rc
-        # Fall through to diagnostics after a successful setup
+        if sys.stdin.isatty():
+            rc = run_setup_wizard()
+            if rc != 0:
+                return rc
+            # Fall through to diagnostics after a successful setup
+        else:
+            # Non-interactive caller (Claude's Bash tool). Print a short
+            # copy-pastable message and exit cleanly — Claude will relay it
+            # to the user.
+            _print_wizard_handoff()
+            return 0
 
     return _run_checks(skip_network=args.no_network)
+
+
+def _wizard_launcher_path() -> str:
+    """Short, stable path to the wizard launcher that bootstrap.py writes."""
+    return str(c.home() / "bin" / "wizard")
+
+
+def _print_wizard_handoff() -> None:
+    """Print the short copy-paste message the user needs to set up credentials.
+
+    The wizard cannot run from Claude's Bash tool because `getpass` requires
+    a TTY (which is also the only safe channel for secrets — they'd leak
+    into the conversation transcript otherwise)."""
+    short = _wizard_launcher_path()
+    print()
+    print("===== Amazon Ads OS — setup needed =====")
+    print()
+    print("No Amazon Ads connection is configured yet.")
+    print()
+    print("To set up, paste this into your terminal (the leading ! is required):")
+    print()
+    print(f"  !{short}")
+    print()
+    print("This runs the setup wizard in your shell so you can enter")
+    print("credentials securely (hidden input). Nothing is sent through")
+    print("Claude — your client_secret and refresh_token stay local.")
+    print()
 
 
 if __name__ == "__main__":
