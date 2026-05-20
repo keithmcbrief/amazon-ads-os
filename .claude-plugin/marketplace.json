@@ -7,10 +7,7 @@
   "plugins": [
     {
       "name": "amazon-ads-os",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/keithmcbrief/amazon-ads-os.git"
-      },
+      "source": "./plugin",
       "description": "Operating system for Amazon Ads agencies. Pull reports, find wasteful search terms, add negatives — all in plain English from Claude Code.",
       "version": "0.1.0",
       "category": "marketing",
