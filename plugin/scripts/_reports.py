@@ -106,6 +106,17 @@ def submit_report(
     """
     validate_date_window(slug, start, end)
     spec = c.REPORT_SPECS[slug]
+    # Amazon v3 reports with timeUnit=SUMMARY don't accept "date" as a column —
+    # they require "startDate" + "endDate" instead. Our REPORT_SPECS keep "date"
+    # because that's the canonical CSV column we write downstream; we translate
+    # on the wire here and map it back when we decode the response.
+    api_columns: list[str] = []
+    for col in spec["columns"]:
+        if col == "date":
+            api_columns.extend(["startDate", "endDate"])
+        else:
+            api_columns.append(col)
+
     body: dict[str, Any] = {
         "name": name or f"amazon-ads-os {slug} {start}_{end}",
         "startDate": start,
@@ -113,7 +124,7 @@ def submit_report(
         "configuration": {
             "adProduct": spec["adProduct"],
             "reportTypeId": spec["reportTypeId"],
-            "columns": list(spec["columns"]),
+            "columns": api_columns,
             "timeUnit": "SUMMARY",
             "format": "GZIP_JSON",
             "groupBy": list(spec["groupBy"]),
@@ -252,6 +263,13 @@ def download_report(
     rows = _fetch_and_decode(download_url, profile=profile, state=state)
     spec = c.REPORT_SPECS[slug]
     columns = spec["columns"]
+    # Amazon returns startDate/endDate (because that's what we sent for SUMMARY)
+    # but our canonical CSV columns include "date". Backfill it from startDate so
+    # downstream consumers (search_terms_analyze, etc.) keep working.
+    if "date" in columns:
+        for row in rows:
+            if "date" not in row and "startDate" in row:
+                row["date"] = row["startDate"]
     out_path = canonical_csv_path(profile, slug, state["start"], state["end"], state["request_hash"])
     c.write_rows_csv(out_path, columns, rows)
     return out_path

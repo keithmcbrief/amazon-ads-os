@@ -77,6 +77,54 @@ def test_submit_invalid_window_raises_before_http():
         m.assert_not_called()
 
 
+def test_submit_translates_date_column_to_startDate_endDate():
+    """Amazon v3 reports with timeUnit=SUMMARY reject 'date' as a column.
+    We must send startDate + endDate on the wire even though our REPORT_SPECS
+    keep 'date' as the canonical CSV column name."""
+    profile = _seed_profile()
+    submit_resp = FakeResponse(202, {"reportId": "rpt-translated"})
+    with patch("_common.requests.request", return_value=submit_resp) as m:
+        r.submit_report(profile, "sp-search-terms", "2026-04-01", "2026-04-30")
+    # Inspect the body that was sent
+    call = m.call_args
+    body = call.kwargs.get("json")
+    cols = body["configuration"]["columns"]
+    assert "date" not in cols, "'date' column was sent to Amazon; SUMMARY rejects it"
+    assert "startDate" in cols and "endDate" in cols, (
+        f"startDate/endDate not in submitted columns: {cols}"
+    )
+
+
+def test_download_backfills_date_from_startDate():
+    """API returns startDate/endDate but our CSV columns include 'date'.
+    The downloader should populate 'date' from 'startDate' so downstream
+    code (search_terms_analyze, etc.) keeps working."""
+    profile = _seed_profile()
+    rows = [{
+        "startDate": "2026-04-01", "endDate": "2026-04-30",
+        "campaignId": "111", "campaignName": "x", "searchTerm": "blue sneakers",
+        "cost": 12.34, "sales7d": 0, "clicks": 5,
+    }]
+    dl_resp = MagicMock(status_code=200, content=_gzip_json(rows))
+    state = {
+        "reportId": "rpt-x",
+        "slug": "sp-search-terms",
+        "start": "2026-04-01",
+        "end": "2026-04-30",
+        "request_hash": "abc12345",
+        "status": "COMPLETED",
+    }
+    with patch("_reports.requests.get", return_value=dl_resp):
+        path = r.download_report(profile, state, "https://signed.example/x.gz")
+    text = path.read_text()
+    # 'date' column is in the header and populated from startDate
+    header = text.splitlines()[0].split(",")
+    assert "date" in header
+    first_row = text.splitlines()[1].split(",")
+    date_col = header.index("date")
+    assert first_row[date_col] == "2026-04-01"
+
+
 # ---- 401 refresh + retry ----------------------------------------------
 
 def test_401_triggers_token_refresh_and_retry():
